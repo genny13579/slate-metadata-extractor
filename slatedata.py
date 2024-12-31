@@ -21,7 +21,7 @@ def extractSlateImg(filename, debug = False):
     image = cv2.imread(filename)
     #Convert the image to grayscale 
     image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) 
-
+    print("extracting slate image")
     at_detector = Detector(
         families="tag36h11",
         nthreads=1,
@@ -31,7 +31,13 @@ def extractSlateImg(filename, debug = False):
         decode_sharpening=0.25,
         debug=0
     )
+    #what is this, will it help??
+    #arucoParams = cv2.aruco.DetectorParameters()
+    #arucoParams.markerBorderBits = 2
+    #params.adaptiveThreshWinSizeStep = 1
+
     d = at_detector.detect(image)
+    print(f"len d: {len(d)}")
     if len(d) == 0:
         if debug:
             print("no tag")
@@ -56,8 +62,11 @@ def extractSlateImg(filename, debug = False):
     warp_img = cv2.warpPerspective(image, homography, (470, 360)) #demensions of the slate transformed into
     #im_dest = cv2.warpPerspective(image, homoGr, (100000, 100000))
     #resized_image_dest = cv2.resize(im_dest, (100, 100)) 
-    flipWarp_img = cv2.flip(warp_img, 1)
-    #cv2_imshow(flipWarp_img)
+
+    #depending on april tag orientation flip it to right side up
+    #flipWarp_img = cv2.flip(warp_img, 1) #use this line to flip over y axis
+    flipWarp_img = cv2.flip(warp_img, 0) #use to flip over x axis
+
     return flipWarp_img
 
 def ocr_image(src_img):
@@ -75,23 +84,35 @@ def ocrTextInRectangle(img, rect, debug = False, showImg = False):
     #rect is: [0, 100, 50, 200] for [x start, x len, y start, y len]
     y,height,x,width = rect
     crop_img = img[x:x+width, y:y+height]
+    print("saving crop img")
+    cv2.imwrite('text_{}.jpg'.format(y), crop_img)
+    result = cv2.imwrite('./test.png', crop_img) #cv2.imwrite('/Downloads/SlateT1/image1.png', image1)
+    #print(f'tried to save image {result}: {crop_img}')
+    print(f'saved image {result}')
     #if showImg:
-        #cv2.imshow(crop_img)
+        #cv2.imshow("Cropped Image", crop_img) #cv2.imshow(crop_img)
     img = Image.fromarray(crop_img)
     color_img = img.convert('RGB')
-
+    #print("saving crop")
+    #cv2.imwrite('slateCrop_{}.jpg'.format(f"recognized-as-{color_img}"), crop_img)
+    #cv2.imwrite('/Downloads/SlateT1/testImg.png', color_img)
     r = ocr_image(color_img)
+    #print("saving r")
+    #cv2.imwrite('/Downloads/SlateT1/testImg.png', r)
     if debug:
+        print("debug")
         cv2.imwrite('slateCrop_{}.jpg'.format(f"recognized-as-{r}"), crop_img)
     return r
 
 def extractSceneAndTake(exractedSlate, debug = False):
     #These numbers determine the box the take and scene will be read from in the image
-    scene = ocrTextInRectangle(exractedSlate, [140, 130, 100, 130], debug) #showImg only for colab
-    take = ocrTextInRectangle(exractedSlate, [280, 170, 110, 120], debug)
+    #scene = ocrTextInRectangle(exractedSlate, [140, 130, 100, 130], debug)
+    #take = ocrTextInRectangle(exractedSlate, [280, 170, 110, 120], debug)
+    scene = ocrTextInRectangle(exractedSlate, [140, 150, 260, 85], debug) #showImg only for colab
+    take = ocrTextInRectangle(exractedSlate, [360, 100, 260, 85], debug) #600, 100, 200, 100
     return (scene, take)
 
-def extractVidFrames(filename, debug = False):
+def extractVidFrames(filename, start_frame=0, end_frame=-1, skip=10, debug = False):
     cap = cv2.VideoCapture(filename)
 
     # Get the frame rate
@@ -102,6 +123,8 @@ def extractVidFrames(filename, debug = False):
 
     # Create a counter to keep track of the frame number
     frame_count = 0
+    #keeps track of most recent frame with slate identified
+    captFrame = 0
     #print(cap.isOpened())
     cap.isOpened() == True
     results = []
@@ -119,16 +142,18 @@ def extractVidFrames(filename, debug = False):
         frame_count += 1
 
         # Save the frame as an image
-        if frame_count%10 == 0:
+        if frame_count >= start_frame and frame_count%skip == 0 and ((frame_count <= end_frame) or (end_frame == -1)):
             if debug:
                 print(f"frame num: {frame_count}!")
+                #print(f"last captured frame num: {captFrame}!")
                 cv2.imwrite('frame_{}.jpg'.format(frame_count), frame)
                 frameFile = ('frame_{}.jpg'.format(frame_count))
-                esi = extractSlateImg(frameFile)#matrix representing the image itself an ndarray
+            esi = extractSlateImg(frameFile)#matrix representing the image itself an ndarray
             #print(esi)
             #print(type(esi))
             if isinstance(esi, np.ndarray):
                 st = extractSceneAndTake(esi, debug)
+                captFrame = frame_count
                 if debug:
                     cv2.imwrite('slate_{}.jpg'.format(frame_count), esi)
                     print(f"Found scene/take: {st}")
@@ -139,9 +164,26 @@ def extractVidFrames(filename, debug = False):
                     print(f"results: {results}")
                 cap.release()
                 return results
+            #print(f"frame_count - captFrame = {frame_count - captFrame}")
+            #print(f"length of results: {len(results)}")
+            if (len(results) >= 1) and ((frame_count - captFrame) > 200):
+                if debug:
+                    print("found at least 1, but now the slate is gone")
+                    print(f"results: {results}")
+                cap.release()
+                print("cap release")
+                return results
+            if (len(results) == 0) and ((frame_count - captFrame) > 500):
+                if debug:
+                    print("found none, can't find slate")
+                    print(f"results: {results}")
+                cap.release()
+                print("cap release")
+                return results
+
             #elif esi == 0:
 
-
+    #make it stop watching at a threshold
     # Release the video capture object
     if debug:
         print("went through entire video")
@@ -151,7 +193,7 @@ def extractVidFrames(filename, debug = False):
 
 
 def cleanScene(s, debug = False):
-    match = re.search(r"[A-Za-z]\d+", s)
+    match = re.search(r"\d+[A-Za-z]", s) #\d+[A-Z]
     #catches error when theres no capital Letter w/ num
     if not match:
         if debug:
@@ -200,7 +242,7 @@ def proccessAndRenameVid(filename, debug = False):
     os.rename(filename, newName)
 
 def proccessVideo(filename, debug = False):
-    results = extractVidFrames(filename, debug)
+    results = extractVidFrames(filename, debug=debug)
     if len(results) <= 2:
         s = "-scene-"
         t = "-take-"
